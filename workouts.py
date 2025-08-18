@@ -51,19 +51,41 @@ def initialize_openai():
         return None
 
 
-async def ask_openai(prompt, model="gpt-4o"):
+def format_workout_data_as_text(df):
+    """Convert the entire DataFrame to text format for AI context"""
+    # Convert DataFrame to CSV string
+    csv_string = df.to_csv(index=False)
+
+    context = f"""
+YOUR WORKOUT DATA (CSV FORMAT):
+{csv_string}
+
+This is your complete workout history. Answer questions based on this data.
+"""
+    return context.strip()
+
+
+async def ask_openai(prompt, model="gpt-4o", workout_data=None):
     """Send prompt to OpenAI and return response"""
     try:
         client = openai.OpenAI()
 
         console.print(f"[dim]Sending query to AI agent...[/]")
 
+        # Always include workout data if available
+        if workout_data is not None:
+            console.print(f"[dim]Including complete workout data...[/]")
+            workout_context = format_workout_data_as_text(workout_data)
+            full_prompt = f"{workout_context}\n\nUSER QUESTION: {prompt}"
+        else:
+            full_prompt = prompt
+
         response = client.chat.completions.create(
             model=model,
             messages=[
-                {"role": "user", "content": prompt}
+                {"role": "user", "content": full_prompt}
             ],
-            max_tokens=1000,
+            max_tokens=1500,  # Increased token limit since we're sending more data
             temperature=0.7
         )
 
@@ -223,9 +245,9 @@ def interactive_session(df, openai_model=None):
                     console.print(f"\n[bold cyan]═══ AI AGENT QUERY ═══[/]")
                     console.print(f"[dim]Query: {prompt}[/]")
 
-                    # This is a synchronous call for now - we'll make it async later if needed
+                    # Pass workout data to AI for context
                     import asyncio
-                    response = asyncio.run(ask_openai(prompt, openai_model or "gpt-4o"))
+                    response = asyncio.run(ask_openai(prompt, openai_model or "gpt-4o", df))
 
                     console.print(f"\n[bold yellow]AI RESPONSE:[/]")
                     console.print(f"[white]{response}[/]")
