@@ -7,6 +7,7 @@ A retro-styled command line tool for analyzing workout data
 
 import sys
 import argparse
+import os
 from pathlib import Path
 import pandas as pd
 from rich.console import Console
@@ -14,9 +15,62 @@ from rich.table import Table
 from rich.text import Text
 from rich.panel import Panel
 from datetime import datetime
+from dotenv import load_dotenv
+import openai
 
 # Initialize rich console for styling
 console = Console()
+
+# Global variable to track OpenAI availability
+OPENAI_AVAILABLE = False
+
+
+def initialize_openai():
+    """Initialize OpenAI API and check availability"""
+    global OPENAI_AVAILABLE
+
+    try:
+        # Load environment variables
+        load_dotenv()
+
+        # Get API key from environment
+        api_key = os.getenv('OPENAI_API_KEY')
+        model = os.getenv('MODEL', 'gpt-4o')  # Default to gpt-4o if not specified
+
+        if api_key:
+            openai.api_key = api_key
+            OPENAI_AVAILABLE = True
+            console.print(f"[bold green]✓[/] OpenAI API connected (Model: {model})")
+            return model
+        else:
+            console.print("[bold yellow]⚠[/] OpenAI API key not found in .env file")
+            return None
+
+    except Exception as e:
+        console.print(f"[bold red]✗[/] OpenAI initialization failed: {str(e)}")
+        return None
+
+
+async def ask_openai(prompt, model="gpt-4o"):
+    """Send prompt to OpenAI and return response"""
+    try:
+        client = openai.OpenAI()
+
+        console.print(f"[dim]Sending query to AI agent...[/]")
+
+        response = client.chat.completions.create(
+            model=model,
+            messages=[
+                {"role": "user", "content": prompt}
+            ],
+            max_tokens=1000,
+            temperature=0.7
+        )
+
+        return response.choices[0].message.content
+
+    except Exception as e:
+        return f"AI ERROR: {str(e)}"
 
 
 def display_banner():
@@ -121,40 +175,65 @@ def display_quick_stats(df):
     console.print(stats_table)
 
 
-def interactive_session(df):
+def interactive_session(df, openai_model=None):
     """Interactive session for exploring workout data"""
     console.print("\n[bold cyan]═══ ENTERING INTERACTIVE MODE ═══[/]")
-    console.print("[dim]Available commands: 'chart', 'stats', 'exercises', 'help', 'exit'[/]")
+
+    help_commands = "'chart', 'stats', 'exercises', 'help', 'exit'"
+    if OPENAI_AVAILABLE:
+        help_commands = "'chart', 'stats', 'exercises', '/ai <prompt>', 'help', 'exit'"
+
+    console.print(f"[dim]Available commands: {help_commands}[/]")
 
     while True:
         try:
-            command = console.input("\n[bold green]CLASSIFIED > [/]").strip().lower()
+            command = console.input("\n[bold green]CLASSIFIED > [/]").strip()
 
-            if command in ['exit', 'quit', 'q']:
+            if command.lower() in ['exit', 'quit', 'q']:
                 console.print("[bold red]MISSION TERMINATED[/]")
                 console.print("[dim]Secure connection closed. Data wiped from memory.[/]")
                 break
 
-            elif command == 'help':
+            elif command.lower() == 'help':
                 console.print("\n[bold yellow]AVAILABLE COMMANDS:[/]")
                 console.print("  [cyan]chart[/]  - Display volume chart")
                 console.print("  [cyan]stats[/]  - Show workout statistics")
                 console.print("  [cyan]exercises[/] - List all exercises")
+                if OPENAI_AVAILABLE:
+                    console.print("  [cyan]/ai <prompt>[/] - Ask AI agent a question")
                 console.print("  [cyan]help[/]   - Show this help")
                 console.print("  [cyan]exit[/]   - Terminate session")
 
-            elif command == 'chart':
+            elif command.lower() == 'chart':
                 create_volume_chart(df)
 
-            elif command == 'stats':
+            elif command.lower() == 'stats':
                 display_quick_stats(df)
 
-            elif command == 'exercises':
+            elif command.lower() == 'exercises':
                 exercise_list = df['Exercise'].unique()
                 console.print(f"\n[bold cyan]CLASSIFIED EXERCISE DATABASE ({len(exercise_list)} entries):[/]")
                 for i, exercise in enumerate(exercise_list, 1):
                     total_sets = df[df['Exercise'] == exercise]['Sets'].sum()
                     console.print(f"  {i:2d}. {exercise} [dim]({total_sets} total sets)[/]")
+
+            elif command.startswith('/ai ') and OPENAI_AVAILABLE:
+                prompt = command[4:].strip()  # Remove '/ai ' prefix
+                if prompt:
+                    console.print(f"\n[bold cyan]═══ AI AGENT QUERY ═══[/]")
+                    console.print(f"[dim]Query: {prompt}[/]")
+
+                    # This is a synchronous call for now - we'll make it async later if needed
+                    import asyncio
+                    response = asyncio.run(ask_openai(prompt, openai_model or "gpt-4o"))
+
+                    console.print(f"\n[bold yellow]AI RESPONSE:[/]")
+                    console.print(f"[white]{response}[/]")
+                else:
+                    console.print("[bold red]ERROR:[/] Please provide a prompt after /ai")
+
+            elif command.startswith('/ai ') and not OPENAI_AVAILABLE:
+                console.print("[bold red]AI UNAVAILABLE:[/] OpenAI API not configured")
 
             elif command == '':
                 continue
@@ -206,6 +285,9 @@ Examples:
     # Display banner
     display_banner()
 
+    # Initialize OpenAI
+    openai_model = initialize_openai()
+
     # Load data
     df = load_workout_data(args.file)
     if df is None:
@@ -222,13 +304,13 @@ Examples:
 
     # Enter interactive mode if requested or by default
     if args.interactive:
-        interactive_session(df)
+        interactive_session(df, openai_model)
     else:
         # Auto-enter interactive mode by default
         console.print(f"\n[dim green]{'═' * 70}[/]")
         console.print("[bold green]DATA ANALYSIS COMPLETE[/]")
         console.print("[dim]Entering interactive mode... (type 'exit' to quit)[/]")
-        interactive_session(df)
+        interactive_session(df, openai_model)
 
     console.print(f"\n[dim green]{'═' * 70}[/]")
     console.print("[bold green]MISSION COMPLETE: All systems offline[/]")
